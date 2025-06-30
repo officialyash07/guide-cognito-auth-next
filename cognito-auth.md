@@ -79,13 +79,309 @@ WEB_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxx
 
 ---
 
-## Folder Structure └── ├── │
+## Folder Structure
 
 ```
 my-project/
-    ├── app
-    ├── components
-    ├── context
-    ├── utils
+    ├── app/
+    │     ├── api/
+    │     │    ├── signup/
+    │     │    │    └── route.js
+    │     │    ├── confirm-signup/
+    │     │    │    └── route.js
+    │     │    ├── resend-code/
+    │     │    │    └── route.js
+    │     │    ├── login/
+    │     │    │    └── route.js
+    │     │    ├── logout/
+    │     │    │    └── route.js
+    │     │    ├── auth-status/
+    │     │    │    └── route.js
+    │     ├── auth/
+    │     │    └── page.js (auth page)
+    │     ├── dashboard/
+    │     │    └── page.js (dashboard page)
+    │     ├── global.css
+    │     ├── layout.js
+    │     └── page.js (home page)
+    ├── components/
+    │     └── auth/
+    │          ├── signup.js
+    │          ├── login.js
+    │          └── confirm-signup.js
+    ├── context/
+    │     └── auth-context.js
+    ├── utils/
+    │     └── cognito-config.js
     ├── .env
 ```
+
+---
+
+## Cognito Client Configuration
+
+Now you have to configure cognito client so that you can call Cognito API using AWS Cognito SDK.
+
+**`/utils/cognito-config.js`**
+
+```jsx
+import { CognitoIdentityProviderClient } from "@aws-sdk/client-cognito-identity-provider";
+
+const cognitoClient = new CognitoIdentityProviderClient({
+    region: process.env.AWS_REGION || "us-east-1",
+});
+
+export default cognitoClient;
+```
+
+---
+
+## APIs Configuration
+
+**1. Signup API**
+
+**`/app/api/signup/route.js`**
+
+```jsx
+import { SignUpCommand } from "@aws-sdk/client-cognito-identity-provider";
+
+import cognitoClient from "@/utils/cognito-config";
+
+export const POST = async (req) => {
+    // Grab inputs from frontend.
+
+    const { fullName, email, password } = await req.json();
+
+    // Input validation.
+
+    const trimmedName = fullName.trim();
+    const trimmedEmail = email.trim();
+    const trimmedPassword = password.trim();
+
+    if (!trimmedName || !trimmedEmail || !trimmedPassword) {
+        return Response.json(
+            { error: true, message: "All fields are required." },
+            { status: 400 }
+        );
+    }
+
+    const emailRegex = new RegExp(
+        "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+    );
+    if (!emailRegex.test(trimmedEmail)) {
+        return Response.json(
+            { error: true, message: "Invalid email format." },
+            { status: 400 }
+        );
+    }
+
+    if (trimmedPassword.length < 6) {
+        return Response.json(
+            { error: true, message: "Password must be at least 6 characters." },
+            { status: 400 }
+        );
+    }
+
+    // Check whether cognito client is configured or not.
+
+    const ClientId = process.env.WEB_CLIENT_ID;
+    if (!ClientId) {
+        return Response.json(
+            { error: true, message: "Client ID is not configured." },
+            { status: 500 }
+        );
+    }
+
+    // Sign up the user in Cognito.
+
+    try {
+        const signupParams = {
+            ClientId: ClientId,
+            Username: trimmedEmail,
+            Password: trimmedPassword,
+            UserAttributes: [
+                { Name: "email", Value: trimmedEmail },
+                { Name: "custom:fullName", Value: trimmedName },
+            ],
+        };
+
+        const command = new SignUpCommand(signupParams);
+        const response = await cognitoClient.send(command);
+        console.log(response);
+
+        return Response.json(
+            {
+                error: false,
+                message:
+                    "User signed up successfully. Please check your email to verify your account.",
+            },
+            { status: 200 }
+        );
+    } catch (error) {
+        if (error.name === "UsernameExistsException") {
+            return Response.json(
+                { error: true, message: "Email already exists." },
+                { status: 400 }
+            );
+        }
+
+        console.error("Sign up error:", error);
+        return Response.json(
+            {
+                error: true,
+                message:
+                    error.message ||
+                    "Failed to sign up user. Please try again.",
+            },
+            { status: 400 }
+        );
+    }
+};
+```
+
+**2. Confirm Signup API**
+
+**`/app/api/confirm-signup/route.js`**
+
+```jsx
+import { ConfirmSignUpCommand } from "@aws-sdk/client-cognito-identity-provider";
+
+import cognitoClient from "@/utils/cognito-config";
+
+export const POST = async (req) => {
+    // Grab input from frontend.
+
+    const { email, code } = await req.json();
+
+    //Input Validation
+
+    const trimmedEmail = email.trim();
+    const trimmedCode = code.trim();
+
+    if (!trimmedEmail || !trimmedCode) {
+        return Response.json(**``**
+
+            {
+                error: true,
+                message: "Email and verification code are required.",
+            },
+            { status: 400 }
+        );
+    }
+
+    // Check whether cognito client is configured or not.
+
+    const ClientId = process.env.WEB_CLIENT_ID;
+    if (!ClientId) {
+        return Response.json(
+            { error: true, message: "Client ID is not configured." },
+            { status: 500 }
+        );
+    }
+
+    // Verify the user using OTP.
+
+    try {
+        const confirmSignupParams = {
+            ClientId: ClientId,
+            Username: trimmedEmail,
+            ConfirmationCode: trimmedCode,
+        };
+
+        const command = new ConfirmSignUpCommand(confirmSignupParams);
+        const response = await cognitoClient.send(command);
+        console.log(response);
+
+        return Response.json(
+            {
+                error: false,
+                message: "Account verified successfully.",
+            },
+            { status: 200 }
+        );
+    } catch (error) {
+        return Response.json(
+            {
+                error: true,
+                message: error.message || "Account Verification Failed",
+            },
+            { status: 400 }
+        );
+    }
+};
+
+```
+
+**3. Resend Verification Code API**
+
+**`/app/api/resend-code/route.js`**
+
+```jsx
+import { ResendConfirmationCodeCommand } from "@aws-sdk/client-cognito-identity-provider";
+
+import cognitoClient from "@/utils/cognito-config";
+
+export const POST = async (req) => {
+    // Grab email from frontend
+
+    const { email } = await req.json();
+
+    // Input Validation
+
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail) {
+        return Response.json(
+            { error: true, message: "Email is required" },
+            { status: 400 }
+        );
+    }
+
+    // Check whether the cognito client is configured or not.
+
+    const ClientId = process.env.WEB_CLIENT_ID;
+    if (!ClientId) {
+        return Response.json(
+            { error: true, message: "Client ID is not configured." },
+            { status: 500 }
+        );
+    }
+
+    // Resend verification code on email address.
+
+    try {
+        const resendCodeParams = {
+            ClientId: ClientId,
+            Username: email,
+        };
+
+        const command = new ResendConfirmationCodeCommand(resendCodeParams);
+        await cognitoClient.send(command);
+
+        return Response.json(
+            {
+                error: false,
+                message: "Resent verification code successfully.",
+            },
+            { status: 200 }
+        );
+    } catch (error) {
+        return Response.json(
+            {
+                error: true,
+                message: error.message || "Failed to resend verification code.",
+                details: error.toString(),
+            },
+            { status: 400 }
+        );
+    }
+};
+```
+
+**4. Login API**
+
+**`/app/api/login/route.js`**
+
+**4. Logout API**
+
+**`/app/api/logout/route.js`**
